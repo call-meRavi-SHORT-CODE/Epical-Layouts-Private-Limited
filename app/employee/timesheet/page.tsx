@@ -11,8 +11,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Calendar } from '@/components/ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Progress } from '@/components/ui/progress';
 import { 
   Clock, 
@@ -33,9 +31,13 @@ import {
   Download,
   Filter,
   Search,
-  RefreshCw
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight,
+  Coffee,
+  MapPin
 } from 'lucide-react';
-import { format, addDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
+import { format, addDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, addWeeks, addMonths, isSameDay, getDay, startOfDay } from 'date-fns';
 
 interface TimeEntry {
   id: string;
@@ -48,6 +50,7 @@ interface TimeEntry {
   duration: number; // in minutes
   status: 'running' | 'completed' | 'pending_approval' | 'approved';
   isManual: boolean;
+  breakTime?: number; // in minutes
 }
 
 interface Project {
@@ -56,6 +59,16 @@ interface Project {
   client: string;
   color: string;
   isActive: boolean;
+}
+
+interface DayData {
+  date: Date;
+  entries: TimeEntry[];
+  totalTime: number;
+  status: 'present' | 'absent' | 'weekend' | 'holiday';
+  checkIn?: string;
+  checkOut?: string;
+  breakTime?: number;
 }
 
 export default function TimesheetPage() {
@@ -69,11 +82,11 @@ export default function TimesheetPage() {
   });
 
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-  const [selectedWeek, setSelectedWeek] = useState<Date>(new Date());
+  const [viewMode, setViewMode] = useState<'week' | 'month'>('week');
+  const [currentWeek, setCurrentWeek] = useState<Date>(new Date());
+  const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
   const [editingEntry, setEditingEntry] = useState<string | null>(null);
-  const [filterProject, setFilterProject] = useState('all');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [viewMode, setViewMode] = useState<'day' | 'week' | 'month'>('week');
+  const [showAddEntry, setShowAddEntry] = useState(false);
 
   const user = {
     name: 'Ravikrishna J',
@@ -99,7 +112,8 @@ export default function TimesheetPage() {
       endTime: '12:30',
       duration: 210,
       status: 'completed',
-      isManual: false
+      isManual: false,
+      breakTime: 15
     },
     {
       id: '2',
@@ -108,10 +122,11 @@ export default function TimesheetPage() {
       task: 'Design Review',
       description: 'Reviewing wireframes and providing feedback',
       startTime: '14:00',
-      endTime: '15:30',
-      duration: 90,
+      endTime: '17:30',
+      duration: 210,
       status: 'completed',
-      isManual: false
+      isManual: false,
+      breakTime: 30
     },
     {
       id: '3',
@@ -119,11 +134,25 @@ export default function TimesheetPage() {
       project: 'Brand Guidelines',
       task: 'Logo Design',
       description: 'Creating brand logo variations',
-      startTime: '10:00',
+      startTime: '09:30',
       endTime: '17:00',
-      duration: 420,
+      duration: 450,
       status: 'approved',
-      isManual: false
+      isManual: false,
+      breakTime: 45
+    },
+    {
+      id: '4',
+      date: format(addDays(new Date(), -2), 'yyyy-MM-dd'),
+      project: 'E-commerce Platform',
+      task: 'Backend API',
+      description: 'Developing user authentication endpoints',
+      startTime: '08:45',
+      endTime: '17:15',
+      duration: 510,
+      status: 'approved',
+      isManual: false,
+      breakTime: 60
     }
   ]);
 
@@ -131,10 +160,9 @@ export default function TimesheetPage() {
     project: '',
     task: '',
     description: '',
-    date: format(new Date(), 'yyyy-MM-dd'),
     startTime: '',
     endTime: '',
-    duration: ''
+    breakTime: '0'
   });
 
   // Timer effect
@@ -158,6 +186,8 @@ export default function TimesheetPage() {
   const formatDuration = (minutes: number): string => {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
+    if (hours === 0) return `${mins}m`;
+    if (mins === 0) return `${hours}h`;
     return `${hours}h ${mins}m`;
   };
 
@@ -212,8 +242,8 @@ export default function TimesheetPage() {
       return;
     }
 
-    const start = new Date(`${newEntry.date}T${newEntry.startTime}`);
-    const end = new Date(`${newEntry.date}T${newEntry.endTime}`);
+    const start = new Date(`${format(selectedDate, 'yyyy-MM-dd')}T${newEntry.startTime}`);
+    const end = new Date(`${format(selectedDate, 'yyyy-MM-dd')}T${newEntry.endTime}`);
     const duration = Math.floor((end.getTime() - start.getTime()) / (1000 * 60));
 
     if (duration <= 0) {
@@ -223,7 +253,7 @@ export default function TimesheetPage() {
 
     const manualEntry: TimeEntry = {
       id: Date.now().toString(),
-      date: newEntry.date,
+      date: format(selectedDate, 'yyyy-MM-dd'),
       project: newEntry.project,
       task: newEntry.task,
       description: newEntry.description,
@@ -231,7 +261,8 @@ export default function TimesheetPage() {
       endTime: newEntry.endTime,
       duration,
       status: 'pending_approval',
-      isManual: true
+      isManual: true,
+      breakTime: parseInt(newEntry.breakTime) || 0
     };
 
     setTimeEntries(prev => [manualEntry, ...prev]);
@@ -239,11 +270,11 @@ export default function TimesheetPage() {
       project: '',
       task: '',
       description: '',
-      date: format(new Date(), 'yyyy-MM-dd'),
       startTime: '',
       endTime: '',
-      duration: ''
+      breakTime: '0'
     });
+    setShowAddEntry(false);
   };
 
   const deleteEntry = (id: string) => {
@@ -265,35 +296,68 @@ export default function TimesheetPage() {
     }
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'running': return <Play className="h-3 w-3" />;
-      case 'completed': return <CheckCircle className="h-3 w-3" />;
-      case 'pending_approval': return <AlertCircle className="h-3 w-3" />;
-      case 'approved': return <CheckCircle className="h-3 w-3" />;
-      default: return <Clock className="h-3 w-3" />;
+  const getDayData = (date: Date): DayData => {
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const dayEntries = timeEntries.filter(entry => entry.date === dateStr);
+    const totalTime = dayEntries.reduce((total, entry) => total + entry.duration, 0);
+    const totalBreakTime = dayEntries.reduce((total, entry) => total + (entry.breakTime || 0), 0);
+    
+    const dayOfWeek = getDay(date);
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    
+    let status: 'present' | 'absent' | 'weekend' | 'holiday' = 'absent';
+    if (isWeekend) {
+      status = 'weekend';
+    } else if (totalTime > 0) {
+      status = 'present';
     }
+
+    const checkIn = dayEntries.length > 0 ? dayEntries[0].startTime : undefined;
+    const checkOut = dayEntries.length > 0 && dayEntries[dayEntries.length - 1].endTime ? dayEntries[dayEntries.length - 1].endTime : undefined;
+
+    return {
+      date,
+      entries: dayEntries,
+      totalTime,
+      status,
+      checkIn,
+      checkOut,
+      breakTime: totalBreakTime
+    };
   };
 
-  const filteredEntries = timeEntries.filter(entry => {
-    const matchesProject = filterProject === 'all' || entry.project === filterProject;
-    const matchesSearch = entry.task.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         entry.description.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesProject && matchesSearch;
-  });
+  const getWeekDays = (weekStart: Date) => {
+    return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  };
 
-  const todaysEntries = filteredEntries.filter(entry => entry.date === format(selectedDate, 'yyyy-MM-dd'));
-  const weekStart = startOfWeek(selectedWeek, { weekStartsOn: 1 });
-  const weekEnd = endOfWeek(selectedWeek, { weekStartsOn: 1 });
-  const weekEntries = filteredEntries.filter(entry => {
-    const entryDate = new Date(entry.date);
-    return entryDate >= weekStart && entryDate <= weekEnd;
-  });
+  const getMonthDays = (monthStart: Date) => {
+    const start = startOfMonth(monthStart);
+    const end = endOfMonth(monthStart);
+    const startWeek = startOfWeek(start, { weekStartsOn: 1 });
+    const endWeek = endOfWeek(end, { weekStartsOn: 1 });
+    
+    const days = [];
+    let current = startWeek;
+    while (current <= endWeek) {
+      days.push(current);
+      current = addDays(current, 1);
+    }
+    return days;
+  };
 
-  const todaysTotalMinutes = todaysEntries.reduce((total, entry) => total + entry.duration, 0);
-  const weeksTotalMinutes = weekEntries.reduce((total, entry) => total + entry.duration, 0);
+  const weekStart = startOfWeek(currentWeek, { weekStartsOn: 1 });
+  const weekDays = getWeekDays(weekStart);
+  const monthDays = getMonthDays(currentMonth);
 
-  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const weekTotal = weekDays.reduce((total, day) => {
+    const dayData = getDayData(day);
+    return total + dayData.totalTime;
+  }, 0);
+
+  const monthTotal = monthDays.reduce((total, day) => {
+    const dayData = getDayData(day);
+    return total + dayData.totalTime;
+  }, 0);
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -304,475 +368,522 @@ export default function TimesheetPage() {
         
         <main className="flex-1 overflow-auto p-6 custom-scrollbar">
           <div className="max-w-7xl mx-auto space-y-6">
-            {/* Timer Section */}
+            {/* Live Timer Section */}
             <Card className={`${currentTimer.isRunning ? 'bg-gradient-to-r from-green-50 to-blue-50 border-green-200' : 'bg-gray-50'} transition-all duration-300`}>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between mb-4">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    <div className={`p-3 rounded-full ${currentTimer.isRunning ? 'bg-green-100' : 'bg-gray-100'}`}>
-                      <Timer className={`h-6 w-6 ${currentTimer.isRunning ? 'text-green-600' : 'text-gray-400'}`} />
+                    <div className={`p-2 rounded-full ${currentTimer.isRunning ? 'bg-green-100' : 'bg-gray-100'}`}>
+                      <Timer className={`h-5 w-5 ${currentTimer.isRunning ? 'text-green-600' : 'text-gray-400'}`} />
                     </div>
-                    <div>
-                      <h3 className="font-semibold text-lg">
-                        {currentTimer.isRunning ? 'Timer Running' : 'Start New Timer'}
-                      </h3>
-                      <p className="text-gray-600">Track your work time</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className={`text-4xl font-bold ${currentTimer.isRunning ? 'text-green-600' : 'text-gray-400'}`}>
-                      {formatTime(currentTimer.elapsed)}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                  <div className="space-y-2">
-                    <Label>Project</Label>
-                    <Select 
-                      value={currentTimer.project} 
-                      onValueChange={(value) => setCurrentTimer(prev => ({ ...prev, project: value }))}
-                      disabled={currentTimer.isRunning}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select project" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {projects.filter(p => p.isActive).map((project) => (
-                          <SelectItem key={project.id} value={project.name}>
-                            <div className="flex items-center gap-2">
-                              <div 
-                                className="w-3 h-3 rounded-full" 
-                                style={{ backgroundColor: project.color }}
-                              />
-                              {project.name}
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Task</Label>
-                    <Input
-                      placeholder="What are you working on?"
-                      value={currentTimer.task}
-                      onChange={(e) => setCurrentTimer(prev => ({ ...prev, task: e.target.value }))}
-                      disabled={currentTimer.isRunning}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Description (Optional)</Label>
-                    <Input
-                      placeholder="Add details..."
-                      value={currentTimer.description}
-                      onChange={(e) => setCurrentTimer(prev => ({ ...prev, description: e.target.value }))}
-                      disabled={currentTimer.isRunning}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex gap-2">
-                  {!currentTimer.isRunning ? (
-                    <Button onClick={startTimer} className="bg-green-600 hover:bg-green-700">
-                      <Play className="h-4 w-4 mr-2" />
-                      Start Timer
-                    </Button>
-                  ) : (
-                    <>
-                      <Button onClick={pauseTimer} variant="outline">
-                        <Pause className="h-4 w-4 mr-2" />
-                        Pause
-                      </Button>
-                      <Button onClick={stopTimer} className="bg-red-600 hover:bg-red-700">
-                        <Stop className="h-4 w-4 mr-2" />
-                        Stop & Save
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Today</p>
-                      <p className="text-2xl font-bold text-blue-600">{formatDuration(todaysTotalMinutes)}</p>
-                    </div>
-                    <Clock className="h-8 w-8 text-blue-600" />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">This Week</p>
-                      <p className="text-2xl font-bold text-green-600">{formatDuration(weeksTotalMinutes)}</p>
-                    </div>
-                    <BarChart3 className="h-8 w-8 text-green-600" />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Entries Today</p>
-                      <p className="text-2xl font-bold text-purple-600">{todaysEntries.length}</p>
-                    </div>
-                    <Timer className="h-8 w-8 text-purple-600" />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Target Progress</p>
-                      <p className="text-2xl font-bold text-orange-600">{Math.round((todaysTotalMinutes / 480) * 100)}%</p>
-                    </div>
-                    <TrendingUp className="h-8 w-8 text-orange-600" />
-                  </div>
-                  <Progress value={(todaysTotalMinutes / 480) * 100} className="mt-2" />
-                </CardContent>
-              </Card>
-            </div>
-
-            <Tabs defaultValue="daily" className="space-y-6">
-              <TabsList className="grid w-full grid-cols-4">
-                <TabsTrigger value="daily">Daily View</TabsTrigger>
-                <TabsTrigger value="weekly">Weekly View</TabsTrigger>
-                <TabsTrigger value="manual">Add Entry</TabsTrigger>
-                <TabsTrigger value="reports">Reports</TabsTrigger>
-              </TabsList>
-
-              {/* Daily View */}
-              <TabsContent value="daily" className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <CardTitle className="flex items-center gap-2">
-                          <CalendarIcon className="h-5 w-5" />
-                          Daily Timesheet
-                        </CardTitle>
-                        <CardDescription>
-                          {format(selectedDate, 'EEEE, MMMM do, yyyy')}
-                        </CardDescription>
-                      </div>
-                      <div className="flex gap-2">
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button variant="outline">
-                              <CalendarIcon className="h-4 w-4 mr-2" />
-                              {format(selectedDate, 'MMM dd, yyyy')}
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-0" align="start">
-                            <Calendar
-                              mode="single"
-                              selected={selectedDate}
-                              onSelect={setSelectedDate}
-                              initialFocus
-                            />
-                          </PopoverContent>
-                        </Popover>
-                        <Button variant="outline">
-                          <Download className="h-4 w-4 mr-2" />
-                          Export
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    {/* Filters */}
-                    <div className="flex gap-4 mb-6">
-                      <div className="flex-1">
-                        <div className="relative">
-                          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                          <Input
-                            placeholder="Search tasks..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="pl-10"
-                          />
-                        </div>
-                      </div>
-                      <Select value={filterProject} onValueChange={setFilterProject}>
+                    <div className="flex items-center gap-4">
+                      <Select 
+                        value={currentTimer.project} 
+                        onValueChange={(value) => setCurrentTimer(prev => ({ ...prev, project: value }))}
+                        disabled={currentTimer.isRunning}
+                      >
                         <SelectTrigger className="w-48">
-                          <Filter className="h-4 w-4 mr-2" />
-                          <SelectValue placeholder="All Projects" />
+                          <SelectValue placeholder="Select project" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="all">All Projects</SelectItem>
-                          {projects.map((project) => (
+                          {projects.filter(p => p.isActive).map((project) => (
                             <SelectItem key={project.id} value={project.name}>
-                              {project.name}
+                              <div className="flex items-center gap-2">
+                                <div 
+                                  className="w-3 h-3 rounded-full" 
+                                  style={{ backgroundColor: project.color }}
+                                />
+                                {project.name}
+                              </div>
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
+                      
+                      <Input
+                        placeholder="What are you working on?"
+                        value={currentTimer.task}
+                        onChange={(e) => setCurrentTimer(prev => ({ ...prev, task: e.target.value }))}
+                        disabled={currentTimer.isRunning}
+                        className="w-64"
+                      />
                     </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <p className={`text-2xl font-bold ${currentTimer.isRunning ? 'text-green-600' : 'text-gray-400'}`}>
+                        {formatTime(currentTimer.elapsed)}
+                      </p>
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      {!currentTimer.isRunning ? (
+                        <Button onClick={startTimer} size="sm" className="bg-green-600 hover:bg-green-700">
+                          <Play className="h-4 w-4 mr-1" />
+                          Start
+                        </Button>
+                      ) : (
+                        <>
+                          <Button onClick={pauseTimer} size="sm" variant="outline">
+                            <Pause className="h-4 w-4 mr-1" />
+                            Pause
+                          </Button>
+                          <Button onClick={stopTimer} size="sm" className="bg-red-600 hover:bg-red-700">
+                            <Stop className="h-4 w-4 mr-1" />
+                            Stop
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-                    {/* Time Entries */}
-                    <div className="space-y-4">
-                      {todaysEntries.map((entry) => (
-                        <div key={entry.id} className="p-4 border rounded-lg hover:shadow-md transition-shadow duration-200">
-                          <div className="flex items-start justify-between">
-                            <div className="flex items-start gap-3">
-                              <div 
-                                className="w-4 h-4 rounded-full mt-1" 
-                                style={{ backgroundColor: getProjectColor(entry.project) }}
-                              />
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2">
-                                  <h4 className="font-medium">{entry.project}</h4>
-                                  <Badge className={getStatusColor(entry.status)}>
-                                    <div className="flex items-center gap-1">
-                                      {getStatusIcon(entry.status)}
-                                      {entry.status.replace('_', ' ')}
-                                    </div>
-                                  </Badge>
-                                  {entry.isManual && (
-                                    <Badge variant="outline">Manual</Badge>
-                                  )}
-                                </div>
-                                <p className="text-sm font-medium text-gray-700">{entry.task}</p>
-                                <p className="text-xs text-gray-500">{entry.description}</p>
-                                <p className="text-xs text-gray-400">
-                                  {entry.startTime} - {entry.endTime || 'Running'}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <p className="font-semibold text-lg">{formatDuration(entry.duration)}</p>
-                              <div className="flex gap-1 mt-2">
-                                <Button size="sm" variant="outline">
-                                  <Edit className="h-3 w-3" />
-                                </Button>
-                                <Button 
-                                  size="sm" 
-                                  variant="outline" 
-                                  onClick={() => deleteEntry(entry.id)}
-                                  className="text-red-600 hover:text-red-700"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            </div>
+            {/* Calendar Navigation */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setViewMode('week')}
+                        className={viewMode === 'week' ? 'bg-blue-100 text-blue-700' : ''}
+                      >
+                        Week
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setViewMode('month')}
+                        className={viewMode === 'month' ? 'bg-blue-100 text-blue-700' : ''}
+                      >
+                        Month
+                      </Button>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (viewMode === 'week') {
+                            setCurrentWeek(addWeeks(currentWeek, -1));
+                          } else {
+                            setCurrentMonth(addMonths(currentMonth, -1));
+                          }
+                        }}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      
+                      <h3 className="text-lg font-semibold min-w-48 text-center">
+                        {viewMode === 'week' 
+                          ? `${format(weekStart, 'MMM dd')} - ${format(addDays(weekStart, 6), 'MMM dd, yyyy')}`
+                          : format(currentMonth, 'MMMM yyyy')
+                        }
+                      </h3>
+                      
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (viewMode === 'week') {
+                            setCurrentWeek(addWeeks(currentWeek, 1));
+                          } else {
+                            setCurrentMonth(addMonths(currentMonth, 1));
+                          }
+                        }}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setCurrentWeek(new Date());
+                        setCurrentMonth(new Date());
+                      }}
+                    >
+                      Today
+                    </Button>
+                    <Button variant="outline" size="sm">
+                      <Download className="h-4 w-4 mr-1" />
+                      Export
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              
+              <CardContent>
+                {viewMode === 'week' ? (
+                  /* Weekly View */
+                  <div className="space-y-4">
+                    {/* Week Header */}
+                    <div className="grid grid-cols-8 gap-4 pb-2 border-b">
+                      <div className="text-sm font-medium text-gray-500"></div>
+                      {weekDays.map((day) => (
+                        <div key={format(day, 'yyyy-MM-dd')} className="text-center">
+                          <div className="text-sm font-medium text-gray-700">
+                            {format(day, 'EEE')}
+                          </div>
+                          <div className={`text-lg font-semibold ${isSameDay(day, new Date()) ? 'text-blue-600' : 'text-gray-900'}`}>
+                            {format(day, 'd')}
                           </div>
                         </div>
                       ))}
-
-                      {todaysEntries.length === 0 && (
-                        <div className="text-center py-8">
-                          <Clock className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                          <p className="text-gray-500">No time entries for this day</p>
-                          <p className="text-sm text-gray-400">Start the timer or add a manual entry</p>
-                        </div>
-                      )}
                     </div>
 
-                    {/* Daily Summary */}
-                    {todaysEntries.length > 0 && (
-                      <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-                        <div className="flex justify-between items-center">
-                          <span className="font-medium">Total Time Today:</span>
-                          <span className="text-xl font-bold text-blue-600">
-                            {formatDuration(todaysTotalMinutes)}
-                          </span>
-                        </div>
-                        <div className="mt-2">
-                          <Progress value={(todaysTotalMinutes / 480) * 100} className="h-2" />
-                          <p className="text-xs text-gray-600 mt-1">
-                            {Math.round((todaysTotalMinutes / 480) * 100)}% of 8-hour target
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
+                    {/* Time Slots */}
+                    <div className="space-y-1">
+                      {Array.from({ length: 10 }, (_, i) => i + 8).map((hour) => (
+                        <div key={hour} className="grid grid-cols-8 gap-4 min-h-16">
+                          <div className="text-xs text-gray-500 pt-1">
+                            {hour}:00
+                          </div>
+                          {weekDays.map((day) => {
+                            const dayData = getDayData(day);
+                            const hourEntries = dayData.entries.filter(entry => {
+                              const startHour = parseInt(entry.startTime.split(':')[0]);
+                              const endHour = entry.endTime ? parseInt(entry.endTime.split(':')[0]) : startHour;
+                              return hour >= startHour && hour <= endHour;
+                            });
 
-              {/* Weekly View */}
-              <TabsContent value="weekly" className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <CardTitle className="flex items-center gap-2">
-                          <BarChart3 className="h-5 w-5" />
-                          Weekly Timesheet
-                        </CardTitle>
-                        <CardDescription>
-                          {format(weekStart, 'MMM dd')} - {format(weekEnd, 'MMM dd, yyyy')}
-                        </CardDescription>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button 
-                          variant="outline" 
-                          onClick={() => setSelectedWeek(addDays(selectedWeek, -7))}
-                        >
-                          Previous Week
-                        </Button>
-                        <Button 
-                          variant="outline" 
-                          onClick={() => setSelectedWeek(addDays(selectedWeek, 7))}
-                        >
-                          Next Week
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      {weekDays.map((day) => {
-                        const dayEntries = weekEntries.filter(entry => entry.date === format(day, 'yyyy-MM-dd'));
-                        const dayTotal = dayEntries.reduce((total, entry) => total + entry.duration, 0);
-                        const isToday = format(day, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
-
-                        return (
-                          <div key={format(day, 'yyyy-MM-dd')} className={`p-4 border rounded-lg ${isToday ? 'border-blue-300 bg-blue-50' : ''}`}>
-                            <div className="flex items-center justify-between mb-3">
-                              <div>
-                                <h4 className="font-medium">{format(day, 'EEEE')}</h4>
-                                <p className="text-sm text-gray-500">{format(day, 'MMM dd')}</p>
-                              </div>
-                              <div className="text-right">
-                                <p className="font-semibold">{formatDuration(dayTotal)}</p>
-                                <p className="text-xs text-gray-500">{dayEntries.length} entries</p>
-                              </div>
-                            </div>
-                            
-                            {dayEntries.length > 0 && (
-                              <div className="space-y-2">
-                                {dayEntries.map((entry) => (
-                                  <div key={entry.id} className="flex items-center justify-between text-sm">
-                                    <div className="flex items-center gap-2">
-                                      <div 
-                                        className="w-2 h-2 rounded-full" 
-                                        style={{ backgroundColor: getProjectColor(entry.project) }}
-                                      />
-                                      <span>{entry.project}</span>
-                                      <span className="text-gray-500">•</span>
-                                      <span className="text-gray-600">{entry.task}</span>
-                                    </div>
-                                    <span className="font-medium">{formatDuration(entry.duration)}</span>
+                            return (
+                              <div 
+                                key={`${format(day, 'yyyy-MM-dd')}-${hour}`} 
+                                className={`border rounded p-1 min-h-14 cursor-pointer hover:bg-gray-50 ${
+                                  isSameDay(day, selectedDate) ? 'ring-2 ring-blue-300' : ''
+                                }`}
+                                onClick={() => setSelectedDate(day)}
+                              >
+                                {hourEntries.map((entry) => (
+                                  <div
+                                    key={entry.id}
+                                    className="text-xs p-1 rounded mb-1 text-white font-medium"
+                                    style={{ backgroundColor: getProjectColor(entry.project) }}
+                                  >
+                                    <div className="truncate">{entry.project}</div>
+                                    <div className="truncate opacity-90">{entry.task}</div>
                                   </div>
                                 ))}
                               </div>
-                            )}
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
 
-                            {dayTotal > 0 && (
-                              <div className="mt-3">
-                                <Progress value={(dayTotal / 480) * 100} className="h-1" />
+                    {/* Week Summary */}
+                    <div className="grid grid-cols-8 gap-4 pt-4 border-t">
+                      <div className="text-sm font-medium text-gray-700">Total</div>
+                      {weekDays.map((day) => {
+                        const dayData = getDayData(day);
+                        return (
+                          <div key={format(day, 'yyyy-MM-dd')} className="text-center">
+                            <div className="text-sm font-semibold">
+                              {formatDuration(dayData.totalTime)}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {dayData.entries.length} entries
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  /* Monthly View */
+                  <div className="space-y-4">
+                    {/* Month Header */}
+                    <div className="grid grid-cols-7 gap-2">
+                      {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
+                        <div key={day} className="text-center text-sm font-medium text-gray-700 py-2">
+                          {day}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Month Days */}
+                    <div className="grid grid-cols-7 gap-2">
+                      {monthDays.map((day) => {
+                        const dayData = getDayData(day);
+                        const isCurrentMonth = format(day, 'MM') === format(currentMonth, 'MM');
+                        const isToday = isSameDay(day, new Date());
+                        const isSelected = isSameDay(day, selectedDate);
+
+                        return (
+                          <div
+                            key={format(day, 'yyyy-MM-dd')}
+                            className={`
+                              min-h-24 p-2 border rounded cursor-pointer transition-all duration-200
+                              ${isCurrentMonth ? 'bg-white' : 'bg-gray-50 text-gray-400'}
+                              ${isToday ? 'ring-2 ring-blue-400' : ''}
+                              ${isSelected ? 'ring-2 ring-purple-400' : ''}
+                              ${dayData.status === 'present' ? 'bg-green-50 border-green-200' : ''}
+                              ${dayData.status === 'weekend' ? 'bg-gray-100' : ''}
+                              hover:shadow-md
+                            `}
+                            onClick={() => setSelectedDate(day)}
+                          >
+                            <div className="flex justify-between items-start mb-1">
+                              <span className={`text-sm font-medium ${isToday ? 'text-blue-600' : ''}`}>
+                                {format(day, 'd')}
+                              </span>
+                              {dayData.status === 'present' && (
+                                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                              )}
+                            </div>
+                            
+                            {dayData.totalTime > 0 && (
+                              <div className="space-y-1">
+                                <div className="text-xs font-semibold text-green-600">
+                                  {formatDuration(dayData.totalTime)}
+                                </div>
+                                {dayData.checkIn && (
+                                  <div className="text-xs text-gray-600">
+                                    {dayData.checkIn} - {dayData.checkOut || 'Running'}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            
+                            {dayData.entries.slice(0, 2).map((entry) => (
+                              <div
+                                key={entry.id}
+                                className="text-xs p-1 rounded mb-1 text-white"
+                                style={{ backgroundColor: getProjectColor(entry.project) }}
+                              >
+                                <div className="truncate">{entry.project}</div>
+                              </div>
+                            ))}
+                            
+                            {dayData.entries.length > 2 && (
+                              <div className="text-xs text-gray-500">
+                                +{dayData.entries.length - 2} more
                               </div>
                             )}
                           </div>
                         );
                       })}
                     </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-                    {/* Weekly Summary */}
-                    <div className="mt-6 p-4 bg-green-50 rounded-lg">
-                      <div className="flex justify-between items-center">
-                        <span className="font-medium">Total Week:</span>
-                        <span className="text-xl font-bold text-green-600">
-                          {formatDuration(weeksTotalMinutes)}
-                        </span>
-                      </div>
-                      <div className="mt-2">
-                        <Progress value={(weeksTotalMinutes / (480 * 5)) * 100} className="h-2" />
-                        <p className="text-xs text-gray-600 mt-1">
-                          {Math.round((weeksTotalMinutes / (480 * 5)) * 100)}% of 40-hour target
-                        </p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              {/* Manual Entry */}
-              <TabsContent value="manual" className="space-y-6">
-                <Card>
-                  <CardHeader>
+            {/* Selected Day Details */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
                     <CardTitle className="flex items-center gap-2">
-                      <Plus className="h-5 w-5" />
-                      Add Manual Time Entry
+                      <CalendarIcon className="h-5 w-5" />
+                      {format(selectedDate, 'EEEE, MMMM do, yyyy')}
                     </CardTitle>
                     <CardDescription>
-                      Add time entries for work completed offline
+                      {(() => {
+                        const dayData = getDayData(selectedDate);
+                        return `${formatDuration(dayData.totalTime)} • ${dayData.entries.length} entries`;
+                      })()}
                     </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="date">Date</Label>
-                        <Input
-                          id="date"
-                          type="date"
-                          value={newEntry.date}
-                          onChange={(e) => setNewEntry(prev => ({ ...prev, date: e.target.value }))}
-                        />
+                  </div>
+                  <Button
+                    onClick={() => setShowAddEntry(true)}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Entry
+                  </Button>
+                </div>
+              </CardHeader>
+              
+              <CardContent>
+                {(() => {
+                  const dayData = getDayData(selectedDate);
+                  
+                  if (dayData.entries.length === 0) {
+                    return (
+                      <div className="text-center py-8">
+                        <Clock className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                        <p className="text-gray-500">No time entries for this day</p>
+                        <Button
+                          onClick={() => setShowAddEntry(true)}
+                          variant="outline"
+                          className="mt-4"
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Add First Entry
+                        </Button>
                       </div>
-                      
-                      <div className="space-y-2">
-                        <Label htmlFor="project">Project</Label>
-                        <Select value={newEntry.project} onValueChange={(value) => setNewEntry(prev => ({ ...prev, project: value }))}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select project" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {projects.filter(p => p.isActive).map((project) => (
-                              <SelectItem key={project.id} value={project.name}>
-                                <div className="flex items-center gap-2">
-                                  <div 
-                                    className="w-3 h-3 rounded-full" 
-                                    style={{ backgroundColor: project.color }}
-                                  />
-                                  {project.name}
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-4">
+                      {/* Day Summary */}
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-blue-50 rounded-lg">
+                        <div className="text-center">
+                          <div className="text-sm text-gray-600">Check In</div>
+                          <div className="text-lg font-semibold text-blue-600">
+                            {dayData.checkIn || '-'}
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-sm text-gray-600">Check Out</div>
+                          <div className="text-lg font-semibold text-blue-600">
+                            {dayData.checkOut || 'Running'}
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-sm text-gray-600">Total Time</div>
+                          <div className="text-lg font-semibold text-green-600">
+                            {formatDuration(dayData.totalTime)}
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-sm text-gray-600">Break Time</div>
+                          <div className="text-lg font-semibold text-orange-600">
+                            {formatDuration(dayData.breakTime || 0)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Time Entries */}
+                      <div className="space-y-3">
+                        {dayData.entries.map((entry) => (
+                          <div key={entry.id} className="p-4 border rounded-lg hover:shadow-md transition-shadow duration-200">
+                            <div className="flex items-start justify-between">
+                              <div className="flex items-start gap-3">
+                                <div 
+                                  className="w-4 h-4 rounded-full mt-1" 
+                                  style={{ backgroundColor: getProjectColor(entry.project) }}
+                                />
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-medium">{entry.project}</h4>
+                                    <Badge className={getStatusColor(entry.status)}>
+                                      {entry.status.replace('_', ' ')}
+                                    </Badge>
+                                    {entry.isManual && (
+                                      <Badge variant="outline">Manual</Badge>
+                                    )}
+                                  </div>
+                                  <p className="text-sm font-medium text-gray-700">{entry.task}</p>
+                                  <p className="text-xs text-gray-500">{entry.description}</p>
+                                  <div className="flex items-center gap-4 text-xs text-gray-400">
+                                    <span>{entry.startTime} - {entry.endTime || 'Running'}</span>
+                                    {entry.breakTime && entry.breakTime > 0 && (
+                                      <span className="flex items-center gap-1">
+                                        <Coffee className="h-3 w-3" />
+                                        {formatDuration(entry.breakTime)} break
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                              </div>
+                              <div className="text-right">
+                                <p className="font-semibold text-lg">{formatDuration(entry.duration)}</p>
+                                <div className="flex gap-1 mt-2">
+                                  <Button size="sm" variant="outline">
+                                    <Edit className="h-3 w-3" />
+                                  </Button>
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline" 
+                                    onClick={() => deleteEntry(entry.id)}
+                                    className="text-red-600 hover:text-red-700"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
+                  );
+                })()}
+              </CardContent>
+            </Card>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="task">Task Description</Label>
+            {/* Add Entry Modal */}
+            {showAddEntry && (
+              <Card className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+                <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold">Add Time Entry</h3>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowAddEntry(false)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <Label>Project</Label>
+                      <Select value={newEntry.project} onValueChange={(value) => setNewEntry(prev => ({ ...prev, project: value }))}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select project" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {projects.filter(p => p.isActive).map((project) => (
+                            <SelectItem key={project.id} value={project.name}>
+                              <div className="flex items-center gap-2">
+                                <div 
+                                  className="w-3 h-3 rounded-full" 
+                                  style={{ backgroundColor: project.color }}
+                                />
+                                {project.name}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label>Task</Label>
                       <Input
-                        id="task"
                         placeholder="What did you work on?"
                         value={newEntry.task}
                         onChange={(e) => setNewEntry(prev => ({ ...prev, task: e.target.value }))}
                       />
                     </div>
 
+                    <div>
+                      <Label>Description</Label>
+                      <Textarea
+                        placeholder="Add details..."
+                        value={newEntry.description}
+                        onChange={(e) => setNewEntry(prev => ({ ...prev, description: e.target.value }))}
+                        rows={2}
+                      />
+                    </div>
+
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="startTime">Start Time</Label>
+                      <div>
+                        <Label>Start Time</Label>
                         <Input
-                          id="startTime"
                           type="time"
                           value={newEntry.startTime}
                           onChange={(e) => setNewEntry(prev => ({ ...prev, startTime: e.target.value }))}
                         />
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="endTime">End Time</Label>
+                      <div>
+                        <Label>End Time</Label>
                         <Input
-                          id="endTime"
                           type="time"
                           value={newEntry.endTime}
                           onChange={(e) => setNewEntry(prev => ({ ...prev, endTime: e.target.value }))}
@@ -780,90 +891,85 @@ export default function TimesheetPage() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="description">Description (Optional)</Label>
-                      <Textarea
-                        id="description"
-                        placeholder="Add more details about your work..."
-                        value={newEntry.description}
-                        onChange={(e) => setNewEntry(prev => ({ ...prev, description: e.target.value }))}
+                    <div>
+                      <Label>Break Time (minutes)</Label>
+                      <Input
+                        type="number"
+                        placeholder="0"
+                        value={newEntry.breakTime}
+                        onChange={(e) => setNewEntry(prev => ({ ...prev, breakTime: e.target.value }))}
                       />
                     </div>
 
-                    <Button onClick={addManualEntry} className="w-full">
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Time Entry
-                    </Button>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              {/* Reports */}
-              <TabsContent value="reports" className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Project Breakdown</CardTitle>
-                      <CardDescription>Time distribution by project</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        {projects.map((project) => {
-                          const projectEntries = timeEntries.filter(entry => entry.project === project.name);
-                          const projectTotal = projectEntries.reduce((total, entry) => total + entry.duration, 0);
-                          const percentage = weeksTotalMinutes > 0 ? (projectTotal / weeksTotalMinutes) * 100 : 0;
-
-                          return (
-                            <div key={project.id} className="space-y-2">
-                              <div className="flex justify-between items-center">
-                                <div className="flex items-center gap-2">
-                                  <div 
-                                    className="w-3 h-3 rounded-full" 
-                                    style={{ backgroundColor: project.color }}
-                                  />
-                                  <span className="text-sm font-medium">{project.name}</span>
-                                </div>
-                                <span className="text-sm text-gray-600">{formatDuration(projectTotal)}</span>
-                              </div>
-                              <Progress value={percentage} className="h-2" />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Weekly Summary</CardTitle>
-                      <CardDescription>Performance metrics</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
-                          <span>Total Hours</span>
-                          <span className="font-semibold text-blue-600">{formatDuration(weeksTotalMinutes)}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-3 bg-green-50 rounded-lg">
-                          <span>Daily Average</span>
-                          <span className="font-semibold text-green-600">{formatDuration(Math.floor(weeksTotalMinutes / 7))}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-3 bg-purple-50 rounded-lg">
-                          <span>Total Entries</span>
-                          <span className="font-semibold text-purple-600">{weekEntries.length}</span>
-                        </div>
-                        <div className="flex justify-between items-center p-3 bg-orange-50 rounded-lg">
-                          <span>Target Progress</span>
-                          <span className="font-semibold text-orange-600">
-                            {Math.round((weeksTotalMinutes / (480 * 5)) * 100)}%
-                          </span>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
+                    <div className="flex gap-2 pt-4">
+                      <Button onClick={addManualEntry} className="flex-1">
+                        <Save className="h-4 w-4 mr-2" />
+                        Save Entry
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setShowAddEntry(false)}
+                        className="flex-1"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-              </TabsContent>
-            </Tabs>
+              </Card>
+            )}
+
+            {/* Summary Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-600">This Week</p>
+                      <p className="text-2xl font-bold text-blue-600">{formatDuration(weekTotal)}</p>
+                    </div>
+                    <BarChart3 className="h-8 w-8 text-blue-600" />
+                  </div>
+                  <Progress value={(weekTotal / (40 * 60)) * 100} className="mt-2" />
+                  <p className="text-xs text-gray-500 mt-1">
+                    {Math.round((weekTotal / (40 * 60)) * 100)}% of 40h target
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-600">This Month</p>
+                      <p className="text-2xl font-bold text-green-600">{formatDuration(monthTotal)}</p>
+                    </div>
+                    <CalendarIcon className="h-8 w-8 text-green-600" />
+                  </div>
+                  <Progress value={(monthTotal / (160 * 60)) * 100} className="mt-2" />
+                  <p className="text-xs text-gray-500 mt-1">
+                    {Math.round((monthTotal / (160 * 60)) * 100)}% of 160h target
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-600">Daily Average</p>
+                      <p className="text-2xl font-bold text-purple-600">
+                        {formatDuration(Math.floor(weekTotal / 7))}
+                      </p>
+                    </div>
+                    <TrendingUp className="h-8 w-8 text-purple-600" />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-3">
+                    Based on this week's data
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </main>
       </div>
