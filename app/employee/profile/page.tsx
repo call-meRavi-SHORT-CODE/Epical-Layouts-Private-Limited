@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { format } from 'date-fns';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -39,7 +40,8 @@ import {
   Globe,
   Linkedin,
   Github,
-  Twitter
+  Twitter,
+  Plus
 } from 'lucide-react';
 
 export default function EmployeeProfilePage() {
